@@ -7,13 +7,12 @@ import toTaipeiDateTime from "./util.ts";
 import type { Order, OrderResponse } from "./shared/contracts.ts";
 import {
   menuItemSchema,
-  sessionUserSchema,
   orderItemSchema,
   orderResponseSchema,
   apiErrorResponseSchema,
 } from "./shared/contracts.ts";
 import { createStore } from "./store/index.ts";
-import { createAuth } from "./auth/index.ts";
+import { auth, getCurrentUser } from "./auth/better-auth.ts";
 
 function toOrderResponse(order: Order): OrderResponse {
   return {
@@ -27,17 +26,12 @@ const port = parseInt(process.env.PORT || "3000", 10);
 const host = process.env.HOST || "localhost";
 const allowedOrigin = process.env.API_ALLOWED_ORIGIN || "*";
 const store = createStore({ dataFilePath: "./data/store.json" });
-const auth = createAuth({ dataFilePath: "./data/store.json" });
 const hasPublicAssets =
   existsSync("./public") && existsSync("./public/index.html");
 
 // ─── Response Envelope Schemas（從 shared/contracts.ts 的業務 schema 組合）──
-// 業務核心型別（menuItemSchema, sessionUserSchema, orderResponseSchema 等）
+// 業務核心型別（menuItemSchema, orderResponseSchema 等）
 // 定義在 shared/contracts.ts，這裡只組合成各 API 需要的 envelope 結構。
-
-const loginResponseSchema = z.object({
-  data: sessionUserSchema,
-});
 
 const menuListResponseSchema = z.object({
   data: z.array(menuItemSchema),
@@ -137,39 +131,13 @@ app.onAfterHandle(({ request, set }) => {
 
 // API 路由
 
-// 使用者登入
-app.post(
-  "/api/auth/login",
-  ({ body, set }) => {
-    const result = auth.login({
-      email: body.email,
-      password: body.password,
-    });
-
-    if (!result.ok) {
-      set.status = 401;
-      return { error: "Invalid credentials" };
-    }
-
-    return { data: result.user };
-  },
-  {
-    body: z.object({
-      email: z.string().min(3),
-      password: z.string().min(1),
-    }),
-    detail: {
-      tags: ["auth"],
-      summary: "Login with demo credentials",
-      description:
-        "Validate a demo user account and return the safe user profile.",
-    },
-    response: {
-      200: loginResponseSchema,
-      401: apiErrorResponseSchema,
-    },
-  },
-);
+// ─── Better Auth Handler ──────────────────────────────────────────────────────
+// 所有 /api/auth/* 的請求（sign-up, sign-in, get-session, sign-out 等）
+// 全部交給 Better Auth 處理。
+// Elysia 1.4.x 中，明確的 get()/post() 路由優先順序高於 get("*") SPA fallback，
+// 因此必須分別定義 GET 和 POST，確保路由在 SPA wildcard 之前被捕捉。
+app.get("/api/auth/*", ({ request }) => auth.handler(request));
+app.post("/api/auth/*", ({ request }) => auth.handler(request));
 
 // 菜單路由
 app.get("/api/menu", () => ({ data: [...store.getMenu()] }), {
@@ -295,21 +263,17 @@ app.get(
 // 取得使用者目前進行中的訂單
 app.get(
   "/api/orders/current",
-  ({ query, set }) => {
-    const user = auth.getUserById(query.userId);
-
+  async ({ request, set }) => {
+    const user = await getCurrentUser(request);
     if (!user) {
-      set.status = 404;
-      return { error: "User not found" };
+      set.status = 401;
+      return { error: "Unauthorized" };
     }
 
-    const currentOrder = store.getCurrentOrderByUserId(query.userId);
+    const currentOrder = store.getCurrentOrderByUserId(user.id);
     return { data: currentOrder ? toOrderResponse(currentOrder) : null };
   },
   {
-    query: z.object({
-      userId: z.string().min(1),
-    }),
     detail: {
       tags: ["orders"],
       summary: "Get current order",
@@ -318,7 +282,7 @@ app.get(
     },
     response: {
       200: nullableOrderResponseEnvelopeSchema,
-      404: apiErrorResponseSchema,
+      401: apiErrorResponseSchema,
     },
   },
 );
@@ -326,22 +290,18 @@ app.get(
 // 取得使用者歷史訂單
 app.get(
   "/api/orders/history",
-  ({ query, set }) => {
-    const user = auth.getUserById(query.userId);
-
+  async ({ request, set }) => {
+    const user = await getCurrentUser(request);
     if (!user) {
-      set.status = 404;
-      return { error: "User not found" };
+      set.status = 401;
+      return { error: "Unauthorized" };
     }
 
     return {
-      data: store.getOrderHistoryByUserId(query.userId).map(toOrderResponse),
+      data: store.getOrderHistoryByUserId(user.id).map(toOrderResponse),
     };
   },
   {
-    query: z.object({
-      userId: z.string().min(1),
-    }),
     detail: {
       tags: ["orders"],
       summary: "Get order history",
@@ -349,7 +309,7 @@ app.get(
     },
     response: {
       200: orderListResponseSchema,
-      404: apiErrorResponseSchema,
+      401: apiErrorResponseSchema,
     },
   },
 );
@@ -357,26 +317,23 @@ app.get(
 // 創建新訂單
 app.post(
   "/api/orders",
-  async ({ body, set }) => {
-    const user = auth.getUserById(body.userId);
+  async ({ request, set }) => {
+    const user = await getCurrentUser(request);
     if (!user) {
-      set.status = 404;
-      return { error: "User not found" };
+      set.status = 401;
+      return { error: "Unauthorized" };
     }
 
-    const existingOrder = store.getCurrentOrderByUserId(body.userId);
+    const existingOrder = store.getCurrentOrderByUserId(user.id);
     if (existingOrder) {
       return { data: toOrderResponse(existingOrder) };
     }
 
-    const newOrder = await store.createOrder({ userId: body.userId });
+    const newOrder = await store.createOrder({ userId: user.id });
     set.status = 201;
     return { data: toOrderResponse(newOrder) };
   },
   {
-    body: z.object({
-      userId: z.string().min(1),
-    }),
     detail: {
       tags: ["orders"],
       summary: "Create or reuse current order",
@@ -386,7 +343,7 @@ app.post(
     response: {
       200: orderResponseEnvelopeSchema,
       201: orderResponseEnvelopeSchema,
-      404: apiErrorResponseSchema,
+      401: apiErrorResponseSchema,
     },
   },
 );
@@ -394,7 +351,13 @@ app.post(
 // 獲取單筆訂單
 app.get(
   "/api/orders/:id",
-  ({ params, query, set }) => {
+  async ({ params, request, set }) => {
+    const user = await getCurrentUser(request);
+    if (!user) {
+      set.status = 401;
+      return { error: "Unauthorized" };
+    }
+
     const orderId = parseInt(params.id, 10);
     const order = store.getOrderById(orderId);
 
@@ -403,7 +366,7 @@ app.get(
       return { error: "Order not found" };
     }
 
-    if (order.userId !== query.userId) {
+    if (order.userId !== user.id) {
       set.status = 403;
       return { error: "Forbidden" };
     }
@@ -414,9 +377,6 @@ app.get(
     params: z.object({
       id: z.string().regex(/^[0-9]+$/),
     }),
-    query: z.object({
-      userId: z.string().min(1),
-    }),
     detail: {
       tags: ["orders"],
       summary: "Get order by id",
@@ -425,6 +385,7 @@ app.get(
     },
     response: {
       200: orderResponseEnvelopeSchema,
+      401: apiErrorResponseSchema,
       403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
     },
@@ -434,10 +395,16 @@ app.get(
 // 更新訂單項目
 app.patch(
   "/api/orders/:id",
-  async ({ params, body, set }) => {
+  async ({ params, body, request, set }) => {
+    const user = await getCurrentUser(request);
+    if (!user) {
+      set.status = 401;
+      return { error: "Unauthorized" };
+    }
+
     const orderId = parseInt(params.id);
     const result = await store.updateOrderItem(orderId, {
-      userId: body.userId,
+      userId: user.id,
       itemId: body.itemId,
       qty: body.qty,
     });
@@ -474,7 +441,6 @@ app.patch(
       id: z.string().regex(/^[0-9]+$/),
     }),
     body: z.object({
-      userId: z.string().min(1),
       itemId: z.number().int().min(1),
       qty: z.number().min(0),
     }),
@@ -485,6 +451,7 @@ app.patch(
     },
     response: {
       200: orderResponseEnvelopeSchema,
+      401: apiErrorResponseSchema,
       403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
       409: apiErrorResponseSchema,
@@ -496,9 +463,15 @@ app.patch(
 // 送出訂單
 app.post(
   "/api/orders/:id/submit",
-  async ({ params, body, set }) => {
+  async ({ params, request, set }) => {
+    const user = await getCurrentUser(request);
+    if (!user) {
+      set.status = 401;
+      return { error: "Unauthorized" };
+    }
+
     const orderId = parseInt(params.id, 10);
-    const result = await store.submitOrder(orderId, { userId: body.userId });
+    const result = await store.submitOrder(orderId, { userId: user.id });
 
     if (!result.ok && result.code === "ORDER_NOT_FOUND") {
       set.status = 404;
@@ -531,9 +504,6 @@ app.post(
     params: z.object({
       id: z.string().regex(/^[0-9]+$/),
     }),
-    body: z.object({
-      userId: z.string().min(1),
-    }),
     detail: {
       tags: ["orders"],
       summary: "Submit order",
@@ -542,6 +512,7 @@ app.post(
     response: {
       200: orderResponseEnvelopeSchema,
       400: apiErrorResponseSchema,
+      401: apiErrorResponseSchema,
       403: apiErrorResponseSchema,
       404: apiErrorResponseSchema,
       409: apiErrorResponseSchema,
@@ -568,6 +539,15 @@ if (hasPublicAssets) {
     "*",
     async ({ request }) => {
       const pathname = new URL(request.url).pathname;
+
+      // API 路徑不走 SPA fallback（包含 Better Auth 的 /api/auth/*）
+      if (pathname.startsWith("/api/")) {
+        return new Response(JSON.stringify({ error: "Not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       const staticFile = Bun.file(`./public${pathname}`);
 
       if (pathname !== "/" && (await staticFile.exists())) {
@@ -600,7 +580,6 @@ app.onError(({ error, set, code }) => {
 
 // 啟動服務器
 await store.init();
-await auth.init();
 
 app.listen(port, () => {
   console.log(`🍳 早餐店 API 運行在 http://${host}:${port}`);
