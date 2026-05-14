@@ -15,10 +15,7 @@ function buildApiUrl(path: string) {
 
 export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [emailInput, setEmailInput] = useState("test2@example.com");
-  const [passwordInput, setPasswordInput] = useState("Test1234!");
   const [authError, setAuthError] = useState("");
-  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [isGoogleSigningIn, setIsGoogleSigningIn] = useState(false);
   const [items, setItems] = useState<MenuItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -254,54 +251,30 @@ export default function App() {
     return createdOrderId;
   }
 
-  async function handleLogin(): Promise<void> {
-    setAuthError("");
-    setActionError("");
-    setIsLoggingIn(true);
-
-    try {
-      // Better Auth sign-in endpoint（設定 session cookie）
-      const response = await fetch(buildApiUrl("/api/auth/sign-in/email"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          email: emailInput.trim(),
-          password: passwordInput,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Login failed: HTTP ${response.status}`);
-      }
-
-      // Better Auth 回應格式：{ user: SessionUser, token: string, ... }
-      const payload = (await response.json()) as { user?: SessionUser };
-      const loggedInUser = payload?.user;
-
-      if (!loggedInUser) {
-        throw new Error("Login failed: invalid payload");
-      }
-
-      setUser(loggedInUser);
-    } catch (loginError) {
-      setAuthError("登入失敗，請確認帳號與密碼。");
-      console.error(loginError);
-    } finally {
-      setIsLoggingIn(false);
-    }
-  }
-
   async function handleGoogleSignIn(): Promise<void> {
     setAuthError("");
     setIsGoogleSigningIn(true);
     try {
-      // Better Auth 的 social sign-in 入口：導向後端發起 Google OAuth 流程
-      // callbackURL 決定 OAuth 完成後要回跳的網址（必須是已登記的 redirect URI）
+      // Better Auth 的 social sign-in 入口是 POST。
+      // 先向後端取得導向 Google 同意頁的 URL，再切換瀏覽器位置。
       const callbackURL = window.location.origin;
-      window.location.href = buildApiUrl(
-        `/api/auth/sign-in/social?provider=google&callbackURL=${encodeURIComponent(callbackURL)}`,
-      );
+      const response = await fetch(buildApiUrl("/api/auth/sign-in/social"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ provider: "google", callbackURL }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Google sign-in failed: HTTP ${response.status}`);
+      }
+
+      const payload = (await response.json()) as { url?: string };
+      if (!payload?.url) {
+        throw new Error("Google sign-in failed: missing redirect URL");
+      }
+
+      window.location.href = payload.url;
     } catch {
       setAuthError("Google 登入啟動失敗，請稍後再試。");
       setIsGoogleSigningIn(false);
@@ -568,55 +541,21 @@ export default function App() {
         {!user ? (
           <section className="max-w-xl mx-auto card bg-base-100 shadow-md mb-8">
             <div className="card-body">
-              <h2 className="card-title">登入後開始點餐</h2>
+              <h2 className="card-title">使用 Google 帳號登入</h2>
               <p className="text-sm opacity-70">
-                範例帳號：test@example.com、test2@example.com，密碼皆為
-                Test1234!
+                點擊下方按鈕，使用您的 Google 帳號登入後即可開始點餐。
               </p>
-              <label className="form-control w-full">
-                <span className="label-text mb-1">Email</span>
-                <input
-                  className="input input-bordered"
-                  value={emailInput}
-                  onChange={(event) => {
-                    setEmailInput(event.target.value);
-                  }}
-                />
-              </label>
-              <label className="form-control w-full">
-                <span className="label-text mb-1">密碼</span>
-                <input
-                  type="password"
-                  className="input input-bordered"
-                  value={passwordInput}
-                  onChange={(event) => {
-                    setPasswordInput(event.target.value);
-                  }}
-                />
-              </label>
               {authError ? (
                 <div className="alert alert-error">
                   <span>{authError}</span>
                 </div>
               ) : null}
               <button
-                className="btn btn-primary"
-                onClick={() => {
-                  void handleLogin();
-                }}
-                disabled={isLoggingIn || isGoogleSigningIn}
-              >
-                {isLoggingIn ? "登入中..." : "登入"}
-              </button>
-
-              <div className="divider text-xs opacity-50">或</div>
-
-              <button
-                className="btn btn-outline w-full"
+                className="btn btn-primary w-full"
                 onClick={() => {
                   void handleGoogleSignIn();
                 }}
-                disabled={isGoogleSigningIn || isLoggingIn}
+                disabled={isGoogleSigningIn}
               >
                 {isGoogleSigningIn ? "導向 Google 中..." : "使用 Google 登入"}
               </button>

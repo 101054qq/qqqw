@@ -32,7 +32,7 @@ const isGoogleProviderConfigured = Boolean(
 );
 
 // ─── Better Auth instance ─────────────────────────────────────────────────────
-// V9 第一階段：只啟用 email/password，Google OAuth 放第二階段。
+// V9：只使用 Google OAuth 登入，不提供 email/password 方式。
 // auth tables（user / session / account / verification）存在 bf_v9 schema 下，
 // 與業務 tables（menu_items / orders / order_items）並存於同一 DB。
 export const auth = betterAuth({
@@ -44,7 +44,7 @@ export const auth = betterAuth({
     schema,
   }),
   emailAndPassword: {
-    enabled: true,
+    enabled: false, // ✅ 禁用 email/password 登入
   },
   ...(isGoogleProviderConfigured
     ? {
