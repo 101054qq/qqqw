@@ -8,9 +8,16 @@ import {
 import { user } from "./auth-schema.ts";
 
 // PostgreSQL namespace 隔離
-// 透過 PG_SCHEMA 環境變數切換，預設 "public"
+// 透過 PG_SCHEMA 環境變數切換，預設 "bf_v9"
 // V9 使用 bf_v9（Better Auth 整合版本）
-const appSchema = pgSchema(process.env.PG_SCHEMA ?? "public");
+// 注意：不能使用 "public" 作為 schema 名稱（Drizzle 限制）
+const schemaName = process.env.PG_SCHEMA || "bf_v9";
+if (schemaName === "public") {
+  throw new Error(
+    'PG_SCHEMA cannot be "public". Use a custom schema name or leave it unset to use the default "bf_v9".',
+  );
+}
+const appSchema = pgSchema(schemaName);
 
 // 對照 shared/contracts.ts：
 //   MenuItem { id, name, price, category, description, image_url }

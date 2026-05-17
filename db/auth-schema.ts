@@ -6,13 +6,20 @@ import { boolean, pgSchema, text, timestamp } from "drizzle-orm/pg-core";
 // 3. 與業務表（menu_items / orders / order_items）並存於同一 db/schema，
 //    但放在獨立的 auth-schema.ts，保持職責清晰、方便閱讀對照。
 // 4. pgSchema 從 PG_SCHEMA 環境變數取值，與業務 schema 一致（共用 bf_v9）。
+//    ⚠️ 注意：不能使用 "public" 作為 schema 名稱（Drizzle 限制）
 //
 // 對照 shared/contracts.ts：
 //   SessionUser { id, email, name }  ← 只取這三欄對外暴露（auth/better-auth.ts 負責轉換）
 //   password、emailVerified、image 等欄位屬於 DB 層，不進入 API contract。
 // ─────────────────────────────────────────────────────────────────────────────
 
-const appSchema = pgSchema(process.env.PG_SCHEMA ?? "public");
+const schemaName = process.env.PG_SCHEMA || "bf_v9";
+if (schemaName === "public") {
+  throw new Error(
+    'PG_SCHEMA cannot be "public". Use a custom schema name or leave it unset to use the default "bf_v9".',
+  );
+}
+const appSchema = pgSchema(schemaName);
 
 // ─── user ─────────────────────────────────────────────────────────────────────
 // Better Auth 主表，存放使用者基本資料。
