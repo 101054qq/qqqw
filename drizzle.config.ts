@@ -2,11 +2,12 @@ import { defineConfig } from "drizzle-kit";
 
 export default defineConfig({
   dialect: "postgresql",
-  // ⭕ 使用萬用字元，自動搜尋 src 目錄下（包含子資料夾）的所有 schema 檔案
-  schema: "./src/**/schema*.ts", 
+  // ⭕ 修正為正確的根目錄 db 路徑
+  schema: "./db/schema.ts", 
   out: "./drizzle",
   dbCredentials: {
     url: process.env.DATABASE_URL!,
   },
+  // 🌟 確保管理 bf_v9 的 Schema 空間
   schemaFilter: ["public", "bf_v9"], 
 });
