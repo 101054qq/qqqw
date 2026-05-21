@@ -1,19 +1,12 @@
 import { defineConfig } from "drizzle-kit";
 
-const migrationUrl =
-  process.env.DATABASE_URL_MIGRATION ?? process.env.DATABASE_URL;
-
-if (!migrationUrl) {
-  throw new Error(
-    "DATABASE_URL_MIGRATION or DATABASE_URL is required for drizzle-kit.",
-  );
-}
-
 export default defineConfig({
-  schema: ["./db/schema.ts", "./db/auth-schema.ts"],
-  out: "./drizzle",
   dialect: "postgresql",
+  schema: "./src/db/schema.ts", // 請確認這是不是您 schema 的正確路徑
+  out: "./drizzle",
   dbCredentials: {
-    url: migrationUrl,
+    url: process.env.DATABASE_URL!,
   },
+  // 🌟 關鍵：強制讓 Drizzle-kit 知道要管理 bf_v9 
+  schemaFilter: ["public", "bf_v9"], 
 });
