@@ -33,29 +33,54 @@ const isGoogleProviderConfigured = Boolean(
 
 // ─── Better Auth instance ─────────────────────────────────────────────────────
 // V9：只使用 Google OAuth 登入，不提供 email/password 方式。
-// auth tables（user / session / account / verification）存在 bf_v9 schema 下，
-// 與業務 tables（menu_items / orders / order_items）並存於同一 DB。
-export const auth = betterAuth({
-  baseURL,
-  secret,
-  trustedOrigins,
-  database: drizzleAdapter(db, {
-    provider: "pg",
-    schema,
-  }),
-  emailAndPassword: {
-    enabled: false, // ✅ 禁用 email/password 登入
-  },
-  ...(isGoogleProviderConfigured
-    ? {
-        socialProviders: {
-          google: {
-            clientId: googleClientId!,
-            clientSecret: googleClientSecret!,
+// 使用 lazy 初始化，讓 JSON store 模式也能啟動（auth 仍需要 DB 連線）。
+let _auth: ReturnType<typeof betterAuth> | null = null;
+
+function getAuth() {
+  if (_auth) return _auth;
+
+  if (!db) {
+    throw new Error(
+      "DATABASE_URL is required for auth. Set DATABASE_URL or switch STORE_DRIVER=json.",
+    );
+  }
+
+  _auth = betterAuth({
+    baseURL,
+    secret,
+    trustedOrigins,
+    database: drizzleAdapter(db, {
+      provider: "pg",
+      schema,
+    }),
+    emailAndPassword: {
+      enabled: false, // ✅ 禁用 email/password 登入
+    },
+    ...(isGoogleProviderConfigured
+      ? {
+          socialProviders: {
+            google: {
+              clientId: googleClientId!,
+              clientSecret: googleClientSecret!,
+            },
           },
-        },
-      }
-    : {}),
+        }
+      : {}),
+  });
+
+  return _auth;
+}
+
+export const auth = new Proxy({} as ReturnType<typeof betterAuth>, {
+  get(_, prop) {
+    const instance = getAuth();
+    const value = (instance as Record<string, unknown>)[String(prop)];
+    // 確保 method 呼叫時 this 指向真正的 auth instance
+    if (typeof value === "function") {
+      return value.bind(instance);
+    }
+    return value;
+  },
 });
 
 // ─── Session helper ───────────────────────────────────────────────────────────
